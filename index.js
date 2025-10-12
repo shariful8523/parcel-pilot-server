@@ -1,19 +1,23 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { MongoClient, ServerApiVersion } from "mongodb";
-import { ObjectId } from "mongodb"; // Import ObjectId
+import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
+import Stripe from "stripe";
+
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware
+//  Middleware
 app.use(cors());
 app.use(express.json());
 
+//  Stripe setup
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+//  MongoDB connection setup
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wfpeu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -22,32 +26,20 @@ const client = new MongoClient(uri, {
   },
 });
 
+//  Main function
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
 
-    const db = client.db("parcelDB"); // database name
-    const parcelCollection = db.collection("parcels"); // collection
+    const db = client.db("parcelDB");
+    const parcelCollection = db.collection("parcels");
 
-    // GET all parcels
-
-    app.get("/parcels", async (req, res) => {
-      const parcels = await parcelCollection.find().toArray();
-      res.send(parcels);
-    });
-
-    // parcels api
-    // GET: All parcels OR parcels by user (created_by), sorted by latest
+    //  GET: All parcels OR parcels by user email (created_by)
     app.get("/parcels", async (req, res) => {
       try {
         const userEmail = req.query.email;
-
         const query = userEmail ? { created_by: userEmail } : {};
-        const options = {
-          sort: { createdAt: -1 }, // Newest first
-        };
-
+        const options = { sort: { createdAt: -1 } };
         const parcels = await parcelCollection.find(query, options).toArray();
         res.send(parcels);
       } catch (error) {
@@ -56,7 +48,49 @@ async function run() {
       }
     });
 
-    // DELETE a parcel by ID
+    //  GET: Single parcel by ID
+    app.get("/parcels/:id", async (req, res) => {
+      try {
+        const parcelId = req.params.id;
+
+        if (!ObjectId.isValid(parcelId)) {
+          return res.status(400).send({ message: "Invalid parcel ID" });
+        }
+
+        const parcel = await parcelCollection.findOne({
+          _id: new ObjectId(parcelId),
+        });
+
+        if (!parcel) {
+          return res.status(404).send({ message: "Parcel not found" });
+        }
+
+        res.send(parcel);
+      } catch (error) {
+        console.error("Error fetching parcel by ID:", error);
+        res.status(500).send({ message: "Failed to get parcel" });
+      }
+    });
+
+    //  POST: Create a new parcel
+    app.post("/parcels", async (req, res) => {
+      try {
+        const newParcel = {
+          ...req.body,
+          createdAt: new Date(),
+        };
+        const result = await parcelCollection.insertOne(newParcel);
+        res.send({
+          message: "Parcel added successfully!",
+          insertedId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("Error adding parcel:", error);
+        res.status(500).send({ message: "Failed to add parcel" });
+      }
+    });
+
+    //  DELETE: Remove a parcel
     app.delete("/parcels/:id", async (req, res) => {
       try {
         const parcelId = req.params.id;
@@ -69,14 +103,9 @@ async function run() {
         });
 
         if (result.deletedCount > 0) {
-          res.send({
-            message: "Parcel deleted successfully",
-            deletedCount: result.deletedCount,
-          });
+          res.send({ message: "Parcel deleted successfully" });
         } else {
-          res
-            .status(404)
-            .send({ message: "Parcel not found", deletedCount: 0 });
+          res.status(404).send({ message: "Parcel not found" });
         }
       } catch (error) {
         console.error("Error deleting parcel:", error);
@@ -84,39 +113,43 @@ async function run() {
       }
     });
 
-    //  POST a new parcel
-    app.post("/parcels", async (req, res) => {
-      const newParcel = req.body;
-      const result = await parcelCollection.insertOne(newParcel);
-      res.send({
-        message: "Parcel added successfully!",
-        insertedId: result.insertedId,
-      });
+    //  Stripe Payment Intent API
+    app.post("/create-payment-intent", async (req, res) => {
+      try {
+        const { amount } = req.body;
+
+        if (!amount || amount <= 0) {
+          return res.status(400).send({ message: "Invalid payment amount" });
+        }
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(amount * 100), // Stripe takes amount in paisa
+          currency: "bdt",
+          payment_method_types: ["card"],
+        });
+
+        res.send({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+        console.error("Error creating payment intent:", error);
+        res.status(500).send({ message: "Failed to create payment intent" });
+      }
     });
 
-
-
-
-    
-
-    // Send a ping to confirm a successful connection
+    //  Ping MongoDB
     await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    console.log(" Connected to MongoDB successfully!");
   } finally {
-    // Ensures that the client will close when you finish/error
     // await client.close();
   }
 }
 run().catch(console.dir);
 
-// Sample route
+//  Root route
 app.get("/", (req, res) => {
-  res.send("Parcel Server is running");
+  res.send("🚀 Parcel Server is running");
 });
 
-// Start server
+//  Start server
 app.listen(port, () => {
   console.log(`🔥 Server running on port ${port}`);
 });
