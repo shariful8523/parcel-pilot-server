@@ -31,6 +31,22 @@ async function run() {
     const db = client.db("parcelDB");
     const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
+    const usersCollection = db.collection("users");
+
+    // user api
+    app.post("/users", async (req, res) => {
+      const email = req.body.email;
+      const userExists = await usersCollection.findOne({ email });
+      if (userExists) {
+        // update last log in
+        return res
+          .status(200)
+          .send({ message: "User already exists", inserted: false });
+      }
+      const user = req.body;
+      const result = await usersCollection.insertOne(user);
+      res.send(result);
+    });
 
     //  GET: All parcels or by user email
     app.get("/parcels", async (req, res) => {
@@ -50,10 +66,14 @@ async function run() {
     app.get("/parcels/:id", async (req, res) => {
       try {
         const parcelId = req.params.id;
-        if (!ObjectId.isValid(parcelId)) return res.status(400).send({ message: "Invalid parcel ID" });
+        if (!ObjectId.isValid(parcelId))
+          return res.status(400).send({ message: "Invalid parcel ID" });
 
-        const parcel = await parcelCollection.findOne({ _id: new ObjectId(parcelId) });
-        if (!parcel) return res.status(404).send({ message: "Parcel not found" });
+        const parcel = await parcelCollection.findOne({
+          _id: new ObjectId(parcelId),
+        });
+        if (!parcel)
+          return res.status(404).send({ message: "Parcel not found" });
 
         res.send(parcel);
       } catch (error) {
@@ -70,7 +90,10 @@ async function run() {
           createdAt: new Date(),
         };
         const result = await parcelCollection.insertOne(newParcel);
-        res.send({ message: "Parcel added successfully!", insertedId: result.insertedId });
+        res.send({
+          message: "Parcel added successfully!",
+          insertedId: result.insertedId,
+        });
       } catch (error) {
         console.error("Error adding parcel:", error);
         res.status(500).send({ message: "Failed to add parcel" });
@@ -81,9 +104,12 @@ async function run() {
     app.delete("/parcels/:id", async (req, res) => {
       try {
         const parcelId = req.params.id;
-        if (!ObjectId.isValid(parcelId)) return res.status(400).send({ message: "Invalid parcel ID" });
+        if (!ObjectId.isValid(parcelId))
+          return res.status(400).send({ message: "Invalid parcel ID" });
 
-        const result = await parcelCollection.deleteOne({ _id: new ObjectId(parcelId) });
+        const result = await parcelCollection.deleteOne({
+          _id: new ObjectId(parcelId),
+        });
         if (result.deletedCount > 0) {
           res.send({ message: "Parcel deleted successfully" });
         } else {
@@ -99,7 +125,8 @@ async function run() {
     app.post("/create-payment-intent", async (req, res) => {
       try {
         const { amountInCent } = req.body;
-        if (!amountInCent || amountInCent <= 0) return res.status(400).send({ message: "Invalid payment amount" });
+        if (!amountInCent || amountInCent <= 0)
+          return res.status(400).send({ message: "Invalid payment amount" });
 
         const paymentIntent = await stripe.paymentIntents.create({
           amount: amountInCent,
@@ -112,6 +139,30 @@ async function run() {
         console.error("Error creating payment intent:", error);
         res.status(500).send({ message: "Failed to create payment intent" });
       }
+    });
+
+    // Track a percel
+
+    app.post("/tracking", async (req, res) => {
+      const {
+        tracking_id,
+        parcel_id,
+        status,
+        message,
+        updated_by = "",
+      } = req.body;
+
+      const log = {
+        tracking_id,
+        parcel_id: parcel_id ? new ObjectId(parcel_id) : undefined,
+        status,
+        message,
+        time: new Date(),
+        updated_by,
+      };
+
+      const result = await trackingCollection.insertOne(log);
+      res.send({ success: true, insertedId: result.insertedId });
     });
 
     //  GET: Payment history (user-specific or all for admin)
@@ -131,7 +182,14 @@ async function run() {
     //  POST: Record payment & mark parcel as paid
     app.post("/payments", async (req, res) => {
       try {
-        const { parcelId, userEmail, userName, amount, transactionId, paymentMethod } = req.body;
+        const {
+          parcelId,
+          userEmail,
+          userName,
+          amount,
+          transactionId,
+          paymentMethod,
+        } = req.body;
 
         // Update parcel payment status
         const updateResult = await parcelCollection.updateOne(
@@ -140,7 +198,9 @@ async function run() {
         );
 
         if (updateResult.modifiedCount === 0) {
-          return res.status(404).send({ message: "Parcel not found or already paid" });
+          return res
+            .status(404)
+            .send({ message: "Parcel not found or already paid" });
         }
 
         // Save payment record
@@ -152,7 +212,9 @@ async function run() {
           paymentMethod,
           transactionId,
           paid_at: new Date(),
-          paid_at_string: new Date().toLocaleString("en-BD", { timeZone: "Asia/Dhaka" }),
+          paid_at_string: new Date().toLocaleString("en-BD", {
+            timeZone: "Asia/Dhaka",
+          }),
         };
 
         const paymentResult = await paymentCollection.insertOne(paymentDoc);
