@@ -3,14 +3,24 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
 import Stripe from "stripe";
+import admin from "firebase-admin";
+import fs from "fs";
 
 dotenv.config();
+
 const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Firebase Admin initialization (ESM safe)
+const serviceAccount = JSON.parse(fs.readFileSync(new URL("./firebase-admin-key.json", import.meta.url), "utf-8"));
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 // Stripe setup
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
@@ -32,24 +42,46 @@ async function run() {
     const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
     const usersCollection = db.collection("users");
+    const trackingCollection = db.collection("tracking");
 
-    // user api
-    app.post("/users", async (req, res) => {
+    // Middleware: Firebase token verification
+    const verifyFBToken = async (req, res, next) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) return res.status(401).send({ message: "Unauthorized access" });
+
+      const token = authHeader.split(" ")[1];
+      if (!token) return res.status(401).send({ message: "Unauthorized access" });
+
+      try {
+        const decoded = await admin.auth().verifyIdToken(token);
+        req.decoded = decoded;
+        next();
+      } catch (error) {
+        return res.status(403).send({ message: "Forbidden access" });
+      }
+    };
+
+    // Users API
+    app.post("/users", verifyFBToken,  async (req, res) => {
       const email = req.body.email;
       const userExists = await usersCollection.findOne({ email });
+
       if (userExists) {
         // update last log in
-        return res
-          .status(200)
-          .send({ message: "User already exists", inserted: false });
+        await usersCollection.updateOne(
+          { email },
+          { $set: { last_log_in: new Date().toISOString() } }
+        );
+        return res.status(200).send({ message: "User already exists", inserted: false });
       }
+
       const user = req.body;
       const result = await usersCollection.insertOne(user);
       res.send(result);
     });
 
-    //  GET: All parcels or by user email
-    app.get("/parcels", async (req, res) => {
+    // Parcels API
+    app.get("/parcels", verifyFBToken, async (req, res) => {
       try {
         const userEmail = req.query.email;
         const query = userEmail ? { created_by: userEmail } : {};
@@ -57,76 +89,52 @@ async function run() {
         const parcels = await parcelCollection.find(query, options).toArray();
         res.send(parcels);
       } catch (error) {
-        console.error("Error fetching parcels:", error);
         res.status(500).send({ message: "Failed to get parcels" });
       }
     });
 
-    //  GET: Single parcel by ID
-    app.get("/parcels/:id", async (req, res) => {
+    app.get("/parcels/:id", verifyFBToken,  async (req, res) => {
       try {
         const parcelId = req.params.id;
-        if (!ObjectId.isValid(parcelId))
-          return res.status(400).send({ message: "Invalid parcel ID" });
+        if (!ObjectId.isValid(parcelId)) return res.status(400).send({ message: "Invalid parcel ID" });
 
-        const parcel = await parcelCollection.findOne({
-          _id: new ObjectId(parcelId),
-        });
-        if (!parcel)
-          return res.status(404).send({ message: "Parcel not found" });
+        const parcel = await parcelCollection.findOne({ _id: new ObjectId(parcelId) });
+        if (!parcel) return res.status(404).send({ message: "Parcel not found" });
 
         res.send(parcel);
       } catch (error) {
-        console.error("Error fetching parcel by ID:", error);
         res.status(500).send({ message: "Failed to get parcel" });
       }
     });
 
-    //  POST: Create new parcel
-    app.post("/parcels", async (req, res) => {
+    app.post("/parcels", verifyFBToken,  async (req, res) => {
       try {
-        const newParcel = {
-          ...req.body,
-          createdAt: new Date(),
-        };
+        const newParcel = { ...req.body, createdAt: new Date() };
         const result = await parcelCollection.insertOne(newParcel);
-        res.send({
-          message: "Parcel added successfully!",
-          insertedId: result.insertedId,
-        });
+        res.send({ message: "Parcel added successfully!", insertedId: result.insertedId });
       } catch (error) {
-        console.error("Error adding parcel:", error);
         res.status(500).send({ message: "Failed to add parcel" });
       }
     });
 
-    //  DELETE: Remove a parcel
-    app.delete("/parcels/:id", async (req, res) => {
+    app.delete("/parcels/:id", verifyFBToken,  async (req, res) => {
       try {
         const parcelId = req.params.id;
-        if (!ObjectId.isValid(parcelId))
-          return res.status(400).send({ message: "Invalid parcel ID" });
+        if (!ObjectId.isValid(parcelId)) return res.status(400).send({ message: "Invalid parcel ID" });
 
-        const result = await parcelCollection.deleteOne({
-          _id: new ObjectId(parcelId),
-        });
-        if (result.deletedCount > 0) {
-          res.send({ message: "Parcel deleted successfully" });
-        } else {
-          res.status(404).send({ message: "Parcel not found" });
-        }
+        const result = await parcelCollection.deleteOne({ _id: new ObjectId(parcelId) });
+        if (result.deletedCount > 0) res.send({ message: "Parcel deleted successfully" });
+        else res.status(404).send({ message: "Parcel not found" });
       } catch (error) {
-        console.error("Error deleting parcel:", error);
         res.status(500).send({ message: "Failed to delete parcel" });
       }
     });
 
-    //  Stripe Payment Intent
-    app.post("/create-payment-intent", async (req, res) => {
+    // Stripe Payment Intent
+    app.post("/create-payment-intent", verifyFBToken,  async (req, res) => {
       try {
         const { amountInCent } = req.body;
-        if (!amountInCent || amountInCent <= 0)
-          return res.status(400).send({ message: "Invalid payment amount" });
+        if (!amountInCent || amountInCent <= 0) return res.status(400).send({ message: "Invalid payment amount" });
 
         const paymentIntent = await stripe.paymentIntents.create({
           amount: amountInCent,
@@ -136,21 +144,13 @@ async function run() {
 
         res.send({ clientSecret: paymentIntent.client_secret });
       } catch (error) {
-        console.error("Error creating payment intent:", error);
         res.status(500).send({ message: "Failed to create payment intent" });
       }
     });
 
-    // Track a percel
-
-    app.post("/tracking", async (req, res) => {
-      const {
-        tracking_id,
-        parcel_id,
-        status,
-        message,
-        updated_by = "",
-      } = req.body;
+    // Tracking API
+    app.post("/tracking", verifyFBToken,  async (req, res) => {
+      const { tracking_id, parcel_id, status, message, updated_by = "" } = req.body;
 
       const log = {
         tracking_id,
@@ -165,8 +165,8 @@ async function run() {
       res.send({ success: true, insertedId: result.insertedId });
     });
 
-    //  GET: Payment history (user-specific or all for admin)
-    app.get("/payments", async (req, res) => {
+    // Payments API
+    app.get("/payments", verifyFBToken,  async (req, res) => {
       try {
         const userEmail = req.query.email;
         const query = userEmail ? { email: userEmail } : {};
@@ -174,36 +174,16 @@ async function run() {
         const payments = await paymentCollection.find(query, options).toArray();
         res.send(payments);
       } catch (error) {
-        console.error("Error fetching payments:", error);
         res.status(500).send({ message: "Failed to get payments" });
       }
     });
 
-    //  POST: Record payment & mark parcel as paid
-    app.post("/payments", async (req, res) => {
+    app.post("/payments", verifyFBToken,  async (req, res) => {
       try {
-        const {
-          parcelId,
-          userEmail,
-          userName,
-          amount,
-          transactionId,
-          paymentMethod,
-        } = req.body;
+        const { parcelId, userEmail, userName, amount, transactionId, paymentMethod } = req.body;
 
-        // Update parcel payment status
-        const updateResult = await parcelCollection.updateOne(
-          { _id: new ObjectId(parcelId) },
-          { $set: { payment_status: "paid" } }
-        );
+        await parcelCollection.updateOne({ _id: new ObjectId(parcelId) }, { $set: { payment_status: "paid" } });
 
-        if (updateResult.modifiedCount === 0) {
-          return res
-            .status(404)
-            .send({ message: "Parcel not found or already paid" });
-        }
-
-        // Save payment record
         const paymentDoc = {
           parcelId,
           email: userEmail,
@@ -212,28 +192,20 @@ async function run() {
           paymentMethod,
           transactionId,
           paid_at: new Date(),
-          paid_at_string: new Date().toLocaleString("en-BD", {
-            timeZone: "Asia/Dhaka",
-          }),
+          paid_at_string: new Date().toLocaleString("en-BD", { timeZone: "Asia/Dhaka" }),
         };
 
         const paymentResult = await paymentCollection.insertOne(paymentDoc);
-
-        res.status(201).send({
-          message: "Payment recorded and parcel marked as paid",
-          insertedId: paymentResult.insertedId,
-        });
+        res.status(201).send({ message: "Payment recorded and parcel marked as paid", insertedId: paymentResult.insertedId });
       } catch (error) {
-        console.error("Payment processing failed:", error);
         res.status(500).send({ message: "Failed to record payment" });
       }
     });
 
-    // Ping MongoDB
     await client.db("admin").command({ ping: 1 });
-    console.log(" Connected to MongoDB successfully!");
+    console.log("✅ Connected to MongoDB successfully!");
   } finally {
-    // await client.close(); // Keep connection alive for API
+    // Keep connection alive
   }
 }
 
