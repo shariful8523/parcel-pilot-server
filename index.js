@@ -16,7 +16,12 @@ app.use(cors());
 app.use(express.json());
 
 // Firebase Admin initialization (ESM safe)
-const serviceAccount = JSON.parse(fs.readFileSync(new URL("./firebase-admin-key.json", import.meta.url), "utf-8"));
+const serviceAccount = JSON.parse(
+  fs.readFileSync(
+    new URL("./firebase-admin-key.json", import.meta.url),
+    "utf-8"
+  )
+);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -43,14 +48,17 @@ async function run() {
     const paymentCollection = db.collection("payments");
     const usersCollection = db.collection("users");
     const trackingCollection = db.collection("tracking");
+    const ridersCollection = db.collection("riders");
 
     // Middleware: Firebase token verification
     const verifyFBToken = async (req, res, next) => {
       const authHeader = req.headers.authorization;
-      if (!authHeader) return res.status(401).send({ message: "Unauthorized access" });
+      if (!authHeader)
+        return res.status(401).send({ message: "Unauthorized access" });
 
       const token = authHeader.split(" ")[1];
-      if (!token) return res.status(401).send({ message: "Unauthorized access" });
+      if (!token)
+        return res.status(401).send({ message: "Unauthorized access" });
 
       try {
         const decoded = await admin.auth().verifyIdToken(token);
@@ -62,7 +70,7 @@ async function run() {
     };
 
     // Users API
-    app.post("/users", verifyFBToken,  async (req, res) => {
+    app.post("/users", verifyFBToken, async (req, res) => {
       const email = req.body.email;
       const userExists = await usersCollection.findOne({ email });
 
@@ -72,7 +80,9 @@ async function run() {
           { email },
           { $set: { last_log_in: new Date().toISOString() } }
         );
-        return res.status(200).send({ message: "User already exists", inserted: false });
+        return res
+          .status(200)
+          .send({ message: "User already exists", inserted: false });
       }
 
       const user = req.body;
@@ -93,13 +103,17 @@ async function run() {
       }
     });
 
-    app.get("/parcels/:id", verifyFBToken,  async (req, res) => {
+    app.get("/parcels/:id", verifyFBToken, async (req, res) => {
       try {
         const parcelId = req.params.id;
-        if (!ObjectId.isValid(parcelId)) return res.status(400).send({ message: "Invalid parcel ID" });
+        if (!ObjectId.isValid(parcelId))
+          return res.status(400).send({ message: "Invalid parcel ID" });
 
-        const parcel = await parcelCollection.findOne({ _id: new ObjectId(parcelId) });
-        if (!parcel) return res.status(404).send({ message: "Parcel not found" });
+        const parcel = await parcelCollection.findOne({
+          _id: new ObjectId(parcelId),
+        });
+        if (!parcel)
+          return res.status(404).send({ message: "Parcel not found" });
 
         res.send(parcel);
       } catch (error) {
@@ -107,23 +121,30 @@ async function run() {
       }
     });
 
-    app.post("/parcels", verifyFBToken,  async (req, res) => {
+    app.post("/parcels", verifyFBToken, async (req, res) => {
       try {
         const newParcel = { ...req.body, createdAt: new Date() };
         const result = await parcelCollection.insertOne(newParcel);
-        res.send({ message: "Parcel added successfully!", insertedId: result.insertedId });
+        res.send({
+          message: "Parcel added successfully!",
+          insertedId: result.insertedId,
+        });
       } catch (error) {
         res.status(500).send({ message: "Failed to add parcel" });
       }
     });
 
-    app.delete("/parcels/:id", verifyFBToken,  async (req, res) => {
+    app.delete("/parcels/:id", verifyFBToken, async (req, res) => {
       try {
         const parcelId = req.params.id;
-        if (!ObjectId.isValid(parcelId)) return res.status(400).send({ message: "Invalid parcel ID" });
+        if (!ObjectId.isValid(parcelId))
+          return res.status(400).send({ message: "Invalid parcel ID" });
 
-        const result = await parcelCollection.deleteOne({ _id: new ObjectId(parcelId) });
-        if (result.deletedCount > 0) res.send({ message: "Parcel deleted successfully" });
+        const result = await parcelCollection.deleteOne({
+          _id: new ObjectId(parcelId),
+        });
+        if (result.deletedCount > 0)
+          res.send({ message: "Parcel deleted successfully" });
         else res.status(404).send({ message: "Parcel not found" });
       } catch (error) {
         res.status(500).send({ message: "Failed to delete parcel" });
@@ -131,10 +152,11 @@ async function run() {
     });
 
     // Stripe Payment Intent
-    app.post("/create-payment-intent", verifyFBToken,  async (req, res) => {
+    app.post("/create-payment-intent", verifyFBToken, async (req, res) => {
       try {
         const { amountInCent } = req.body;
-        if (!amountInCent || amountInCent <= 0) return res.status(400).send({ message: "Invalid payment amount" });
+        if (!amountInCent || amountInCent <= 0)
+          return res.status(400).send({ message: "Invalid payment amount" });
 
         const paymentIntent = await stripe.paymentIntents.create({
           amount: amountInCent,
@@ -149,8 +171,14 @@ async function run() {
     });
 
     // Tracking API
-    app.post("/tracking", verifyFBToken,  async (req, res) => {
-      const { tracking_id, parcel_id, status, message, updated_by = "" } = req.body;
+    app.post("/tracking", verifyFBToken, async (req, res) => {
+      const {
+        tracking_id,
+        parcel_id,
+        status,
+        message,
+        updated_by = "",
+      } = req.body;
 
       const log = {
         tracking_id,
@@ -166,7 +194,7 @@ async function run() {
     });
 
     // Payments API
-    app.get("/payments", verifyFBToken,  async (req, res) => {
+    app.get("/payments", verifyFBToken, async (req, res) => {
       try {
         const userEmail = req.query.email;
         const query = userEmail ? { email: userEmail } : {};
@@ -178,11 +206,21 @@ async function run() {
       }
     });
 
-    app.post("/payments", verifyFBToken,  async (req, res) => {
+    app.post("/payments", verifyFBToken, async (req, res) => {
       try {
-        const { parcelId, userEmail, userName, amount, transactionId, paymentMethod } = req.body;
+        const {
+          parcelId,
+          userEmail,
+          userName,
+          amount,
+          transactionId,
+          paymentMethod,
+        } = req.body;
 
-        await parcelCollection.updateOne({ _id: new ObjectId(parcelId) }, { $set: { payment_status: "paid" } });
+        await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          { $set: { payment_status: "paid" } }
+        );
 
         const paymentDoc = {
           parcelId,
@@ -192,13 +230,64 @@ async function run() {
           paymentMethod,
           transactionId,
           paid_at: new Date(),
-          paid_at_string: new Date().toLocaleString("en-BD", { timeZone: "Asia/Dhaka" }),
+          paid_at_string: new Date().toLocaleString("en-BD", {
+            timeZone: "Asia/Dhaka",
+          }),
         };
 
         const paymentResult = await paymentCollection.insertOne(paymentDoc);
-        res.status(201).send({ message: "Payment recorded and parcel marked as paid", insertedId: paymentResult.insertedId });
+        res.status(201).send({
+          message: "Payment recorded and parcel marked as paid",
+          insertedId: paymentResult.insertedId,
+        });
       } catch (error) {
         res.status(500).send({ message: "Failed to record payment" });
+      }
+    });
+
+    // rider api
+
+    app.post("/riders", async (req, res) => {
+      const rider = req.body;
+      const result = await ridersCollection.insertOne(rider);
+      res.send(result);
+    });
+
+    app.get("/riders/pending", async (req, res) => {
+      try {
+        const pendingRiders = await ridersCollection
+          .find({ status: "pending" })
+          .toArray();
+
+        res.send(pendingRiders);
+      } catch (error) {
+        console.error("Failed to load pending riders:", error);
+        res.status(500).send({ message: "Failed to load pending riders" });
+      }
+    });
+
+    app.get("/riders/active", async (req, res) => {
+      const result = await ridersCollection
+        .find({ status: "active" })
+        .toArray();
+      res.send(result);
+    });
+
+    app.patch("/riders/:id/status", async (req, res) => {
+      const { id } = req.params;
+      const { status } = req.body;
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          status,
+        },
+      };
+
+      try {
+        const result = await ridersCollection.updateOne(query, updateDoc);
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to update rider status" });
       }
     });
 
