@@ -70,7 +70,7 @@ async function run() {
     };
 
     // Users API
-    app.post("/users", verifyFBToken, async (req, res) => {
+    app.post("/users",  async (req, res) => {
       const email = req.body.email;
       const userExists = await usersCollection.findOne({ email });
 
@@ -275,7 +275,7 @@ async function run() {
 
     app.patch("/riders/:id/status", async (req, res) => {
       const { id } = req.params;
-      const { status } = req.body;
+      const { status, email } = req.body;
       const query = { _id: new ObjectId(id) };
       const updateDoc = {
         $set: {
@@ -285,6 +285,19 @@ async function run() {
 
       try {
         const result = await ridersCollection.updateOne(query, updateDoc);
+
+        // update user role for accepting rider
+        if(status === 'active'){
+          const userQuery = {email};
+          const userUpdateDoc = {
+            $set: {
+              role: 'rider'
+            }
+          };
+          const roleResult = await usersCollection.updateOne
+          (userQuery, userUpdateDoc)
+        }
+
         res.send(result);
       } catch (err) {
         res.status(500).send({ message: "Failed to update rider status" });
