@@ -69,9 +69,21 @@ async function run() {
       }
     };
 
+    // Verify admin token
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      next();
+    };
+
     // Admin role apis
 
-    app.get("/users/search", async (req, res) => {
+    app.get("/users/search", verifyFBToken, verifyAdmin, async (req, res) => {
       const emailQuery = req.query.email;
       if (!emailQuery) {
         return res.status(400).send({ message: "Missing email query" });
@@ -93,7 +105,7 @@ async function run() {
     });
 
     // GET: Get user role by email
-    app.get("/users/:email/role", async (req, res) => {
+    app.get("/users/:email/role", verifyFBToken, verifyAdmin, async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -114,7 +126,7 @@ async function run() {
       }
     });
 
-    app.patch("/users/:id/role", verifyFBToken, async (req, res) => {
+    app.patch("/users/:id/role", verifyFBToken, verifyAdmin, async (req, res) => {
       const { id } = req.params;
       const { role } = req.body;
 
@@ -135,7 +147,7 @@ async function run() {
     });
 
     // Users API
-    app.post("/users", async (req, res) => {
+    app.post("/users", verifyFBToken, verifyAdmin, async (req, res) => {
       const email = req.body.email;
       const userExists = await usersCollection.findOne({ email });
 
@@ -156,7 +168,7 @@ async function run() {
     });
 
     //  Get all users (default list)
-    app.get("/users", verifyFBToken, async (req, res) => {
+    app.get("/users", verifyFBToken, verifyAdmin, async (req, res) => {
       try {
         const users = await usersCollection
           .find()
