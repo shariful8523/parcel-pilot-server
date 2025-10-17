@@ -69,8 +69,73 @@ async function run() {
       }
     };
 
+    // Admin role apis
+
+    app.get("/users/search", async (req, res) => {
+      const emailQuery = req.query.email;
+      if (!emailQuery) {
+        return res.status(400).send({ message: "Missing email query" });
+      }
+
+      const regex = new RegExp(emailQuery, "i"); // case-insensitive partial match
+
+      try {
+        const users = await usersCollection
+          .find({ email: { $regex: regex } })
+          // .project({ email: 1, createdAt: 1, role: 1 })
+          .limit(10)
+          .toArray();
+        res.send(users);
+      } catch (error) {
+        console.error("Error searching users", error);
+        res.status(500).send({ message: "Error searching users" });
+      }
+    });
+
+    // GET: Get user role by email
+    app.get("/users/:email/role", async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        if (!email) {
+          return res.status(400).send({ message: "Email is required" });
+        }
+
+        const user = await usersCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send({ role: user.role || "user" });
+      } catch (error) {
+        console.error("Error getting user role:", error);
+        res.status(500).send({ message: "Failed to get role" });
+      }
+    });
+
+    app.patch("/users/:id/role", verifyFBToken, async (req, res) => {
+      const { id } = req.params;
+      const { role } = req.body;
+
+      if (!["admin", "user"].includes(role)) {
+        return res.status(400).send({ message: "Invalid role" });
+      }
+
+      try {
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role } }
+        );
+        res.send({ message: `User role updated to ${role}`, result });
+      } catch (error) {
+        console.error("Error updating user role", error);
+        res.status(500).send({ message: "Failed to update user role" });
+      }
+    });
+
     // Users API
-    app.post("/users",  async (req, res) => {
+    app.post("/users", async (req, res) => {
       const email = req.body.email;
       const userExists = await usersCollection.findOne({ email });
 
@@ -88,6 +153,21 @@ async function run() {
       const user = req.body;
       const result = await usersCollection.insertOne(user);
       res.send(result);
+    });
+
+    //  Get all users (default list)
+    app.get("/users", verifyFBToken, async (req, res) => {
+      try {
+        const users = await usersCollection
+          .find()
+          .sort({ created_at: -1 })
+          .limit(50)
+          .toArray();
+        res.send(users);
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        res.status(500).send({ message: "Failed to fetch users" });
+      }
     });
 
     // Parcels API
@@ -287,15 +367,17 @@ async function run() {
         const result = await ridersCollection.updateOne(query, updateDoc);
 
         // update user role for accepting rider
-        if(status === 'active'){
-          const userQuery = {email};
+        if (status === "active") {
+          const userQuery = { email };
           const userUpdateDoc = {
             $set: {
-              role: 'rider'
-            }
+              role: "rider",
+            },
           };
-          const roleResult = await usersCollection.updateOne
-          (userQuery, userUpdateDoc)
+          const roleResult = await usersCollection.updateOne(
+            userQuery,
+            userUpdateDoc
+          );
         }
 
         res.send(result);
