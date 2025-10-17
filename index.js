@@ -82,7 +82,7 @@ async function run() {
 
     // ------------------------ Users Routes ------------------------
 
-    // Search users by email 
+    // Search users by email
     app.get("/users/search", verifyFBToken, verifyAdmin, async (req, res) => {
       const emailQuery = req.query.email;
       if (!emailQuery)
@@ -100,7 +100,7 @@ async function run() {
     });
 
     // Get user role by email
-    app.get("/users/:email/role", verifyFBToken, verifyAdmin, async (req, res) => {
+    app.get("/users/:email/role", verifyFBToken, async (req, res) => {
       const email = req.params.email;
       if (!email) return res.status(400).send({ message: "Email required" });
 
@@ -117,25 +117,30 @@ async function run() {
     });
 
     // Update user role
-    app.patch("/users/:id/role", verifyFBToken, verifyAdmin, async (req, res) => {
-      const { id } = req.params;
-      const { role } = req.body;
-      if (!["admin", "user"].includes(role))
-        return res.status(400).send({ message: "Invalid role" });
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const { id } = req.params;
+        const { role } = req.body;
+        if (!["admin", "user"].includes(role))
+          return res.status(400).send({ message: "Invalid role" });
 
-      try {
-        const result = await usersCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { role } }
-        );
-        res.send({ message: `User role updated to ${role}`, result });
-      } catch (err) {
-        res.status(500).send({ message: "Error updating user role" });
+        try {
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role } }
+          );
+          res.send({ message: `User role updated to ${role}`, result });
+        } catch (err) {
+          res.status(500).send({ message: "Error updating user role" });
+        }
       }
-    });
+    );
 
     // Add new user or update last login if exists
-    app.post("/users", verifyFBToken, verifyAdmin, async (req, res) => {
+    app.post("/users", async (req, res) => {
       const email = req.body.email;
       try {
         const userExists = await usersCollection.findOne({
@@ -199,6 +204,65 @@ async function run() {
       res.send(parcel);
     });
 
+    // GET: Get pending delivery tasks for a rider
+    app.get("/rider/parcels", verifyFBToken, async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        if (!email) {
+          return res.status(400).send({ message: "Rider email is required" });
+        }
+
+        const query = {
+          assigned_rider_email: email,
+          delivery_status: { $in: ["rider_assigned", "in_transit"] },
+        };
+
+        const options = {
+          sort: { creation_date: -1 }, // Newest first
+        };
+
+        const parcels = await parcelCollection.find(query, options).toArray();
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching rider tasks:", error);
+        res.status(500).send({ message: "Failed to get rider tasks" });
+      }
+    });
+
+    // GET: Load completed parcel deliveries for a rider
+    app.get("/rider/completed-parcels", verifyFBToken, async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        if (!email) {
+          return res.status(400).send({ message: "Rider email is required" });
+        }
+
+        const query = {
+          assigned_rider_email: email,
+          delivery_status: {
+            $in: ["delivered", "service_center_delivered"],
+          },
+        };
+
+        const options = {
+          sort: { creation_date: -1 }, // Latest first
+        };
+
+        const completedParcels = await parcelCollection
+          .find(query, options)
+          .toArray();
+
+        res.send(completedParcels);
+      } catch (error) {
+        console.error("Error loading completed parcels:", error);
+        res
+          .status(500)
+          .send({ message: "Failed to load completed deliveries" });
+      }
+    });
+
     app.post("/parcels", verifyFBToken, async (req, res) => {
       const result = await parcelCollection.insertOne({
         ...req.body,
@@ -211,38 +275,79 @@ async function run() {
     });
 
     app.patch("/parcels/:id/assign", verifyFBToken, async (req, res) => {
-            const parcelId = req.params.id;
-            const { riderId, riderName } = req.body;
+      const parcelId = req.params.id;
+      const { riderId, riderName, riderEmail } = req.body;
 
-            try {
-                // Update parcel
-                await parcelCollection.updateOne(
-                    { _id: new ObjectId(parcelId) },
-                    {
-                        $set: {
-                            delivery_status: "in_transit",
-                            assigned_rider_id: riderId,
-                            assigned_rider_name: riderName,
-                        },
-                    }
-                );
+      try {
+        // Update parcel
+        await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          {
+            $set: {
+              delivery_status: "rider_assigned",
+              assigned_rider_id: riderId,
+              assigned_rider_email: riderEmail,
+              assigned_rider_name: riderName,
+            },
+          }
+        );
 
-                // Update rider
-                await ridersCollection.updateOne(
-                    { _id: new ObjectId(riderId) },
-                    {
-                        $set: {
-                            work_status: "in_delivery",
-                        },
-                    }
-                );
+        // Update rider
+        await ridersCollection.updateOne(
+          { _id: new ObjectId(riderId) },
+          {
+            $set: {
+              work_status: "in_delivery",
+            },
+          }
+        );
 
-                res.send({ message: "Rider assigned" });
-            } catch (err) {
-                console.error(err);
-                res.status(500).send({ message: "Failed to assign rider" });
-            }
-        });
+        res.send({ message: "Rider assigned" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to assign rider" });
+      }
+    });
+
+    app.patch("/parcels/:id/status", async (req, res) => {
+      const parcelId = req.params.id;
+      const { status } = req.body;
+      const updatedDoc = {
+        delivery_status: status,
+      };
+
+      if (status === "in_transit") {
+        updatedDoc.picked_at = new Date().toISOString();
+      } else if (status === "delivered") {
+        updatedDoc.delivered_at = new Date().toISOString();
+      }
+
+      try {
+        const result = await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          {
+            $set: updatedDoc,
+          }
+        );
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to update status" });
+      }
+    });
+
+    app.patch("/parcels/:id/cashout", async (req, res) => {
+      const id = req.params.id;
+      const result = await parcelCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            cashout_status: "cashed_out",
+            cashed_out_at: new Date(),
+          },
+        }
+      );
+      res.send(result);
+    });
 
     app.delete("/parcels/:id", verifyFBToken, async (req, res) => {
       const parcelId = req.params.id;
@@ -327,12 +432,10 @@ async function run() {
           timeZone: "Asia/Dhaka",
         }),
       });
-      res
-        .status(201)
-        .send({
-          message: "Payment recorded and parcel marked as paid",
-          insertedId: paymentResult.insertedId,
-        });
+      res.status(201).send({
+        message: "Payment recorded and parcel marked as paid",
+        insertedId: paymentResult.insertedId,
+      });
     });
 
     // ------------------------ Riders ------------------------
