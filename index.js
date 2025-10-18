@@ -47,7 +47,7 @@ async function run() {
     const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
     const usersCollection = db.collection("users");
-    const trackingCollection = db.collection("tracking");
+    const trackingsCollection = db.collection("trackings");
     const ridersCollection = db.collection("riders");
 
     // ------------------------ Firebase Token ------------------------
@@ -378,25 +378,29 @@ async function run() {
     });
 
     // ------------------------ Tracking ------------------------
-    app.post("/tracking", verifyFBToken, async (req, res) => {
-      const {
-        tracking_id,
-        parcel_id,
-        status,
-        message,
-        updated_by = "",
-      } = req.body;
-      const log = {
-        tracking_id,
-        parcel_id: parcel_id ? new ObjectId(parcel_id) : undefined,
-        status,
-        message,
-        time: new Date(),
-        updated_by,
-      };
-      const result = await trackingCollection.insertOne(log);
-      res.send({ success: true, insertedId: result.insertedId });
-    });
+    app.get("/trackings/:trackingId", async (req, res) => {
+            const trackingId = req.params.trackingId;
+
+            const updates = await trackingsCollection
+                .find({ tracking_id: trackingId })
+                .sort({ timestamp: 1 }) 
+                .toArray();
+
+            res.json(updates);
+        });
+
+        app.post("/trackings", async (req, res) => {
+            const update = req.body;
+
+            update.timestamp = new Date(); 
+            if (!update.tracking_id || !update.status) {
+                return res.status(400).json({ message: "tracking_id and status are required." });
+            }
+
+            const result = await trackingsCollection.insertOne(update);
+            res.status(201).json(result);
+        });
+
 
     // ------------------------ Payments ------------------------
     app.get("/payments", verifyFBToken, async (req, res) => {
