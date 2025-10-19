@@ -15,12 +15,9 @@ app.use(cors());
 app.use(express.json());
 
 // ------------------------ Firebase Admin ------------------------
-const serviceAccount = JSON.parse(
-  fs.readFileSync(
-    new URL("./firebase-admin-key.json", import.meta.url),
-    "utf-8"
-  )
-);
+
+const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8');
+const serviceAccount = JSON.parse(decodedKey);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -42,7 +39,7 @@ const client = new MongoClient(uri, {
 // ------------------------ Run Server ------------------------
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     const db = client.db("parcelDB");
     const parcelCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
@@ -203,6 +200,8 @@ async function run() {
       if (!parcel) return res.status(404).send({ message: "Parcel not found" });
       res.send(parcel);
     });
+
+    
 
     // GET: Get pending delivery tasks for a rider
     app.get("/rider/parcels", verifyFBToken, async (req, res) => {
@@ -484,8 +483,8 @@ async function run() {
     });
 
     // ------------------------ Ping MongoDB ------------------------
-    await client.db("admin").command({ ping: 1 });
-    console.log("✅ Connected to MongoDB successfully!");
+    // await client.db("admin").command({ ping: 1 });
+    // console.log("✅ Connected to MongoDB successfully!");
   } finally {
     // Keep connection alive
   }
@@ -495,3 +494,4 @@ run().catch(console.dir);
 
 // ------------------------ Start Server ------------------------
 app.listen(port, () => console.log(`🔥 Server running on port ${port}`));
+// export default app;
