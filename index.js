@@ -163,7 +163,7 @@ async function run() {
     });
 
     // Get latest users
-    app.get("/users", verifyFBToken, verifyAdmin, async (req, res) => {
+    app.get("/users", verifyFBToken,  async (req, res) => {
       try {
         const users = await usersCollection
           .find()
