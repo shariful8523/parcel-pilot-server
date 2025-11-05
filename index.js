@@ -11,12 +11,19 @@ const app = express();
 const port = process.env.PORT || 5000;
 
 // ------------------------ Middleware ------------------------
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin: [
+    'http://localhost:5173',                 
+    'https://parcel-pilot-client.vercel.app' 
+  ],
+  credentials: true
+}));
 
 // ------------------------ Firebase Admin ------------------------
 
-const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8');
+const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
 const serviceAccount = JSON.parse(decodedKey);
 
 admin.initializeApp({
@@ -163,7 +170,7 @@ async function run() {
     });
 
     // Get latest users
-    app.get("/users", verifyFBToken,  async (req, res) => {
+    app.get("/users", verifyFBToken, async (req, res) => {
       try {
         const users = await usersCollection
           .find()
@@ -177,16 +184,24 @@ async function run() {
     });
 
     // ------------------------ Parcel Routes ------------------------
-    app.get("/parcels", verifyFBToken, async (req, res) => {
-      const { email, payment_status, delivery_status } = req.query;
+
+    app.get("/parcels", async (req, res) => {
+      const { email, payment_status, delivery_status, assigned_rider_email } =
+        req.query;
+
       let query = {};
+
       if (email) query.created_by = email;
       if (payment_status) query.payment_status = payment_status;
       if (delivery_status) query.delivery_status = delivery_status;
 
+      if (assigned_rider_email)
+        query.assigned_rider_email = assigned_rider_email;
+
       const parcels = await parcelCollection
         .find(query, { sort: { createdAt: -1 } })
         .toArray();
+
       res.send(parcels);
     });
 
@@ -200,8 +215,6 @@ async function run() {
       if (!parcel) return res.status(404).send({ message: "Parcel not found" });
       res.send(parcel);
     });
-
-    
 
     // GET: Get pending delivery tasks for a rider
     app.get("/rider/parcels", verifyFBToken, async (req, res) => {
@@ -378,28 +391,29 @@ async function run() {
 
     // ------------------------ Tracking ------------------------
     app.get("/trackings/:trackingId", async (req, res) => {
-            const trackingId = req.params.trackingId;
+      const trackingId = req.params.trackingId;
 
-            const updates = await trackingsCollection
-                .find({ tracking_id: trackingId })
-                .sort({ timestamp: 1 }) 
-                .toArray();
+      const updates = await trackingsCollection
+        .find({ tracking_id: trackingId })
+        .sort({ timestamp: 1 })
+        .toArray();
 
-            res.json(updates);
-        });
+      res.json(updates);
+    });
 
-        app.post("/trackings", async (req, res) => {
-            const update = req.body;
+    app.post("/trackings", async (req, res) => {
+      const update = req.body;
 
-            update.timestamp = new Date(); 
-            if (!update.tracking_id || !update.status) {
-                return res.status(400).json({ message: "tracking_id and status are required." });
-            }
+      update.timestamp = new Date();
+      if (!update.tracking_id || !update.status) {
+        return res
+          .status(400)
+          .json({ message: "tracking_id and status are required." });
+      }
 
-            const result = await trackingsCollection.insertOne(update);
-            res.status(201).json(result);
-        });
-
+      const result = await trackingsCollection.insertOne(update);
+      res.status(201).json(result);
+    });
 
     // ------------------------ Payments ------------------------
     app.get("/payments", verifyFBToken, async (req, res) => {
@@ -461,11 +475,26 @@ async function run() {
       res.send(result);
     });
 
+    //  Get all active riders 
     app.get("/riders/available", async (req, res) => {
-      const { district } = req.query;
-      const result = await ridersCollection.find({ district }).toArray();
-      res.send(result);
+      try {
+        const { district } = req.query;
+
+        let query = { status: "active" };
+
+        if (district) {
+          query.district = { $regex: `^${district.trim()}$`, $options: "i" };
+        }
+
+        const result = await ridersCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error fetching available riders:", error);
+        res.status(500).send({ message: "Failed to load riders" });
+      }
     });
+
+    
 
     app.patch("/riders/:id/status", async (req, res) => {
       const { id } = req.params;
