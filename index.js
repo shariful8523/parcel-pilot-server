@@ -457,59 +457,45 @@ async function run() {
 
     // ------------------------ Riders ------------------------
     app.post("/riders", async (req, res) => {
-      const result = await ridersCollection.insertOne(req.body);
-      res.send(result);
+  const riderData = req.body;
+  const email = riderData.email;
+
+  try {
+    // 1️⃣ Insert into Riders Collection
+    const riderResult = await ridersCollection.insertOne({
+      ...riderData,
+      status: "pending", // Default
+      work_status: "idle",
+      created_at: new Date(),
     });
 
-    app.get("/riders/pending", async (req, res) => {
-      const result = await ridersCollection
-        .find({ status: "pending" })
-        .toArray();
-      res.send(result);
-    });
+    // 2️⃣ Insert or Update into Users Collection
+    const userExists = await usersCollection.findOne({ email });
 
-    app.get("/riders/active", async (req, res) => {
-      const result = await ridersCollection
-        .find({ status: "active" })
-        .toArray();
-      res.send(result);
-    });
-
-    //  Get all active riders 
-    app.get("/riders/available", async (req, res) => {
-      try {
-        const { district } = req.query;
-
-        let query = { status: "active" };
-
-        if (district) {
-          query.district = { $regex: `^${district.trim()}$`, $options: "i" };
-        }
-
-        const result = await ridersCollection.find(query).toArray();
-        res.send(result);
-      } catch (error) {
-        console.error("Error fetching available riders:", error);
-        res.status(500).send({ message: "Failed to load riders" });
-      }
-    });
-
-    
-
-    app.patch("/riders/:id/status", async (req, res) => {
-      const { id } = req.params;
-      const { status, email } = req.body;
-      const result = await ridersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { status } }
+    if (!userExists) {
+      await usersCollection.insertOne({
+        email,
+        name: riderData.name,
+        role: "rider",
+        created_at: new Date().toISOString(),
+      });
+    } else {
+      await usersCollection.updateOne(
+        { email },
+        { $set: { role: "rider" } }
       );
+    }
 
-      if (status === "active") {
-        await usersCollection.updateOne({ email }, { $set: { role: "rider" } });
-      }
-
-      res.send(result);
+    res.status(201).send({
+      message: "Rider added successfully & role updated!",
+      riderId: riderResult.insertedId,
     });
+
+  } catch (error) {
+    console.error("Error adding rider:", error);
+    res.status(500).send({ message: "Failed to add rider" });
+  }
+});
 
     // ------------------------ Ping MongoDB ------------------------
     // await client.db("admin").command({ ping: 1 });
